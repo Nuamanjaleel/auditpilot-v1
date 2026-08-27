@@ -1,0 +1,8 @@
+streamlit
+pandas
+openpyxl
+rapidfuzz
+groq
+reportlab
+python-dotenv
+plotly

@@ -1,0 +1,96 @@
+{
+  "gstin": "27AABCS1234F1Z5",
+  "fp": "062024",
+  "b2b": [
+    {
+      "ctin": "29AABCF1234G1Z2",
+      "trdnm": "Infosys BPM Ltd",
+      "inv": [
+        {
+          "inum": "INV-2024-001",
+          "idt": "15-06-2024",
+          "val": 118000.0,
+          "inv_typ": "R",
+          "itc_elg": "Y",
+          "items": [
+            {
+              "txval": 100000.0,
+              "iamt": 18000.0,
+              "camt": 0.0,
+              "samt": 0.0,
+              "csamt": 0.0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "ctin": "27AAGCT5678H1Z9",
+      "trdnm": "Tata Consultancy Services",
+      "inv": [
+        {
+          "inum": "TCS/24-25/1089",
+          "idt": "20-06-2024",
+          "val": 59000.0,
+          "inv_typ": "R",
+          "itc_elg": "Y",
+          "items": [
+            {
+              "txval": 50000.0,
+              "iamt": 0.0,
+              "camt": 4500.0,
+              "samt": 4500.0,
+              "csamt": 0.0
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "ctin": "06AAACT9999K1Z1",
+      "trdnm": "Delhivery Logistics",
+      "inv": [
+        {
+          "inum": "DEL-9902",
+          "idt": "25-06-2024",
+          "val": 23600.0,
+          "inv_typ": "R",
+          "itc_elg": "Y",
+          "items": [
+            {
+              "txval": 20000.0,
+              "iamt": 3600.0,
+              "camt": 0.0,
+              "samt": 0.0,
+              "csamt": 0.0
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "cdnr": [
+    {
+      "ctin": "29AABCF1234G1Z2",
+      "trdnm": "Infosys BPM Ltd",
+      "nt": [
+        {
+          "nt_num": "CN-2024-001",
+          "nt_dt": "28-06-2024",
+          "val": 11800.0,
+          "ntty": "C",
+          "itc_elg": "Y",
+          "items": [
+            {
+              "txval": 10000.0,
+              "iamt": 1800.0,
+              "camt": 0.0,
+              "samt": 0.0,
+              "csamt": 0.0
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
