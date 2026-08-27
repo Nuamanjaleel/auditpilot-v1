@@ -6,3 +6,4 @@ groq
 reportlab
 python-dotenv
 plotly
+playwright

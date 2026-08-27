@@ -1,12 +1,14 @@
 import streamlit as st
 import pandas as pd
+import json
+import os
 import plotly.express as px
-import plotly.graph_objects as go
 from core.gstr2b_parser import parse_gstr2b
 from core.tally_parser import parse_tally_excel
 from core.matching_engine import run_reconciliation
 from core.itc_calculator import compute_itc_summary
 from core.ai_insights import generate_ca_insights
+from core.gst_portal import GSTPortalAutomation
 from reports.pdf_generator import generate_pdf_report
 
 
@@ -47,16 +49,15 @@ st.markdown("""
 # ─── SIDEBAR ───────────────────────────────────────────────────
 with st.sidebar:
     st.image("https://img.icons8.com/isometric/100/scales.png", width=60)
-    st.title("AuditPilot V1.0")
+    st.title("AuditPilot V1.5")
     st.caption("AI-Powered GST Reconciliation")
     st.markdown("---")
-    st.markdown("### 📌 Quick Instructions")
+    st.markdown("### 📌 Instructions")
     st.markdown("""
     1. Enter **Client Details**.
-    2. Upload **GSTR-2B JSON** from GST Portal.
-    3. Upload **Tally Purchase Register** Excel.
+    2. Choose **Manual Upload** OR **Fetch from GST Portal**.
+    3. Upload **Tally Purchase Register**.
     4. Click **Reconcile Now**.
-    5. Download **PDF/Excel Reports**.
     """)
     st.markdown("---")
     st.caption("Built for CA Firms & Tax Professionals")
@@ -78,27 +79,86 @@ with st.expander("📋 Step 1: Client Details", expanded=True):
         return_period = st.selectbox("Return Period", ["June 2024", "May 2024", "April 2024", "March 2024"])
 
 
-# ─── STEP 2: FILE UPLOAD ──────────────────────────────────────
-with st.expander("📁 Step 2: Upload Source Files", expanded=True):
+# ─── STEP 2: SOURCE SELECTION ──────────────────────────────────
+st.header("📁 Step 2: Source Data Selection")
+
+tab_manual, tab_auto = st.tabs(["📄 Option A: Manual File Upload", "🌐 Option B: Auto-Fetch from GST Portal"])
+
+gstr2b_file_obj = None
+
+with tab_manual:
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("**📄 GSTR-2B JSON** *(from GST Portal)*")
-        gstr2b_file = st.file_uploader("Upload GSTR-2B JSON", type=["json"], key="gstr2b")
+        gstr2b_file = st.file_uploader("Upload GSTR-2B JSON", type=["json"], key="gstr2b_manual")
+        if gstr2b_file:
+            gstr2b_file_obj = gstr2b_file
     with col2:
         st.markdown("**📊 Tally Purchase Register** *(Excel Export)*")
-        tally_file = st.file_uploader("Upload Tally Excel", type=["xlsx", "xls"], key="tally")
+        tally_file = st.file_uploader("Upload Tally Excel", type=["xlsx", "xls"], key="tally_manual")
+
+with tab_auto:
+    st.markdown("### 🔒 Fetch GSTR-2B Directly from GST Portal")
+    col_cred1, col_cred2 = st.columns(2)
+    with col_cred1:
+        gst_user = st.text_input("GST Portal Username", placeholder="e.g. sharma_tax")
+    with col_cred2:
+        gst_pass = st.text_input("GST Portal Password", type="password")
+        
+    if st.button("🖼️ Step 1: Load GST Portal CAPTCHA"):
+        if not gst_user or not gst_pass:
+            st.error("Please enter Username and Password first.")
+        else:
+            with st.spinner("Connecting to GST Portal..."):
+                automation = GSTPortalAutomation()
+                session_data = automation.fetch_login_captcha()
+                if session_data["success"]:
+                    st.session_state["gst_session"] = session_data
+                    st.success("Connected to GST Portal! Solve CAPTCHA below:")
+                else:
+                    st.error(f"Failed to connect: {session_data.get('error')}")
+
+    if "gst_session" in st.session_state:
+        session_data = st.session_state["gst_session"]
+        st.image(f"data:image/png;base64,{session_data['captcha_b64']}", caption="GST Portal CAPTCHA")
+        
+        captcha_input = st.text_input("Enter 6-character CAPTCHA shown above:", max_chars=6)
+        
+        if st.button("🚀 Step 2: Login & Fetch GSTR-2B Data"):
+            if not captcha_input:
+                st.error("Please enter the CAPTCHA text.")
+            else:
+                with st.spinner("Logging in and downloading GSTR-2B JSON..."):
+                    automation = GSTPortalAutomation()
+                    download_res = automation.login_and_download_gstr2b(
+                        session_data,
+                        gst_user,
+                        gst_pass,
+                        captcha_input,
+                        financial_year,
+                        return_period
+                    )
+                    if download_res["success"]:
+                        st.success("✅ GSTR-2B JSON successfully downloaded from GST Portal!")
+                        st.session_state["fetched_gstr2b_path"] = download_res["file_path"]
+                    else:
+                        st.error(f"Download Failed: {download_res.get('error')}")
+
+    if "fetched_gstr2b_path" in st.session_state:
+        st.info(f"Using fetched file: `{st.session_state['fetched_gstr2b_path']}`")
+        gstr2b_file_obj = st.session_state["fetched_gstr2b_path"]
 
 
 # ─── STEP 3: RECONCILE BUTTON ─────────────────────────────────
-st.markdown("")
+st.markdown("---")
 if st.button("🚀 RUN AUTOMATED RECONCILIATION", type="primary", use_container_width=True):
     
-    if not gstr2b_file or not tally_file:
-        st.error("⚠️ Please upload BOTH GSTR-2B JSON and Tally Excel files to proceed.")
+    if not gstr2b_file_obj or not tally_file:
+        st.error("⚠️ Please provide BOTH GSTR-2B (via upload or auto-fetch) and Tally Excel file.")
     else:
-        with st.spinner("⏳ Parsing files, matching invoices, and running ITC intelligence..."):
+        with st.spinner("⏳ Processing reconciliation & running AI analysis..."):
             try:
-                df_2b = parse_gstr2b(gstr2b_file)
+                df_2b = parse_gstr2b(gstr2b_file_obj)
                 tally_file.seek(0)
                 df_tally = parse_tally_excel(tally_file)
                 
@@ -119,7 +179,7 @@ if st.button("🚀 RUN AUTOMATED RECONCILIATION", type="primary", use_container_
                 st.success("✅ Reconciliation completed successfully!")
                 
             except Exception as e:
-                st.error(f"❌ Error during execution: {str(e)}")
+                st.error(f"❌ Execution Error: {str(e)}")
 
 
 # ─── STEP 4: DASHBOARD & ANALYTICS ────────────────────────────
@@ -130,7 +190,7 @@ if "results_df" in st.session_state:
     ai_insights = st.session_state["ai_insights"]
     
     st.markdown("---")
-    st.header(f"📊 Audit Executive Dashboard — {st.session_state['client_name']}")
+    st.header(f"📊 Executive Dashboard — {st.session_state['client_name']}")
     st.write(f"**GSTIN:** `{st.session_state['client_gstin']}` | **Period:** {st.session_state['return_period']} (FY {st.session_state['financial_year']})")
     
     # Summary Metrics
@@ -153,15 +213,13 @@ if "results_df" in st.session_state:
     
     st.markdown("---")
     
-    # ─── CHARTS & VISUAL ANALYTICS ────────────────────────────
+    # Visual Analytics
     st.subheader("📈 Visual Analytics")
     chart_col1, chart_col2 = st.columns(2)
     
     with chart_col1:
-        # Chart 1: Donut Chart for ITC Distribution
         itc_labels = ['Eligible ITC', 'ITC At Risk (Blocked)', 'Unclaimed ITC']
         itc_values = [itc['itc_eligible'], itc['itc_at_risk'], itc['itc_unclaimed']]
-        
         fig_donut = px.pie(
             values=itc_values,
             names=itc_labels,
@@ -173,7 +231,6 @@ if "results_df" in st.session_state:
         st.plotly_chart(fig_donut, use_container_width=True)
         
     with chart_col2:
-        # Chart 2: Bar Chart for Invoice Counts
         status_counts = pd.DataFrame({
             "Status": ["Exact Match", "Fuzzy Match", "Missing in 2B", "Missing in Books"],
             "Count": [rec["exact_count"], rec["fuzzy_count"], rec["missing_in_2b_count"], rec["missing_in_books_count"]]
@@ -191,16 +248,14 @@ if "results_df" in st.session_state:
         
     st.markdown("---")
 
-    # 🤖 AI Advisory Box
+    # AI Advisory Box
     st.subheader("🤖 CA Advisory Notes & Action Plan")
     st.info(ai_insights)
 
     st.markdown("---")
 
-    # ─── SUPPLIER RISK ANALYSIS TABLE ─────────────────────────
+    # Supplier Risk Table
     st.subheader("⚠️ Top Suppliers Causing Blocked ITC")
-    st.caption("Send this list to suppliers who haven't filed their GSTR-1 returns.")
-    
     blocked_df = results_df[results_df["status"] == "MISSING_IN_2B"]
     if not blocked_df.empty:
         supplier_summary = (
@@ -216,13 +271,12 @@ if "results_df" in st.session_state:
         supplier_summary.columns = ["Supplier GSTIN", "Supplier Name", "Unfiled Invoices", "Blocked ITC (₹)", "Total Value (₹)"]
         st.dataframe(supplier_summary, use_container_width=True, hide_index=True)
     else:
-        st.success("🎉 Great news! Zero suppliers have unfiled returns causing blocked ITC.")
+        st.success("🎉 Zero suppliers have unfiled returns causing blocked ITC.")
 
     st.markdown("---")
 
-    # ─── FULL INVOICE COMPARISON TABLE ────────────────────────
+    # Full Invoice Comparison Table
     st.subheader("📑 Full Invoice Comparison Table")
-    
     col_search, col_filter = st.columns([2, 1])
     with col_search:
         search_term = st.text_input("🔍 Search Supplier Name, GSTIN, or Invoice #", "")
@@ -233,7 +287,6 @@ if "results_df" in st.session_state:
         )
     
     filtered_df = results_df.copy()
-    
     if status_filter != "All Invoices":
         filtered_df = filtered_df[filtered_df["status"] == status_filter]
         
@@ -250,49 +303,22 @@ if "results_df" in st.session_state:
     
     st.markdown("---")
 
-    # ─── EXPORT OPTIONS ───────────────────────────────────────
+    # Export Options
     st.subheader("📥 Export Audit Reports")
     col1, col2, col3 = st.columns(3)
     
     with col1:
         csv_bytes = results_df.to_csv(index=False).encode("utf-8")
-        st.download_button(
-            "📊 Download CSV Data",
-            data=csv_bytes,
-            file_name=f"reconciliation_{st.session_state['client_name']}.csv",
-            mime="text/csv",
-            use_container_width=True
-        )
+        st.download_button("📊 Download CSV Data", data=csv_bytes, file_name=f"reconciliation_{st.session_state['client_name']}.csv", mime="text/csv", use_container_width=True)
         
     with col2:
         excel_path = "output/reconciliation_report.xlsx"
         results_df.to_excel(excel_path, index=False)
         with open(excel_path, "rb") as f:
-            st.download_button(
-                "📗 Download Excel Audit Sheet",
-                data=f.read(),
-                file_name=f"reconciliation_{st.session_state['client_name']}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True
-            )
+            st.download_button("📗 Download Excel Audit Sheet", data=f.read(), file_name=f"reconciliation_{st.session_state['client_name']}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
             
     with col3:
         pdf_path = "output/reconciliation_report.pdf"
-        generate_pdf_report(
-            pdf_path,
-            st.session_state["client_name"],
-            st.session_state["client_gstin"],
-            st.session_state["financial_year"],
-            st.session_state["return_period"],
-            rec,
-            itc,
-            ai_insights
-        )
+        generate_pdf_report(pdf_path, st.session_state["client_name"], st.session_state["client_gstin"], st.session_state["financial_year"], st.session_state["return_period"], rec, itc, ai_insights)
         with open(pdf_path, "rb") as f:
-            st.download_button(
-                "📕 Download PDF Client Report",
-                data=f.read(),
-                file_name=f"reconciliation_report_{st.session_state['client_name']}.pdf",
-                mime="application/pdf",
-                use_container_width=True
-            )
+            st.download_button("📕 Download PDF Client Report", data=f.read(), file_name=f"reconciliation_report_{st.session_state['client_name']}.pdf", mime="application/pdf", use_container_width=True)
