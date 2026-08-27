@@ -20,27 +20,53 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# ─── CUSTOM CSS ────────────────────────────────────────────────
+# ─── CUSTOM CSS FOR PREMIUM SAAS LOOK ─────────────────────────
 st.markdown("""
 <style>
+    /* Hide Streamlit Branding */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    .stDeployButton {display:none;}
+    
+    /* Gradient Main Header */
     .main-header {
-        font-size: 2.5rem;
+        font-size: 2.6rem;
         font-weight: 800;
-        background: linear-gradient(90deg, #00d4aa, #0072ff);
+        background: linear-gradient(90deg, #00D4AA 0%, #0072FF 100%);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
         margin-bottom: 0px;
     }
     .sub-header {
-        color: #888;
-        font-size: 1rem;
+        color: #8B949E;
+        font-size: 1.05rem;
         margin-bottom: 25px;
     }
-    .stMetric {
-        background-color: #1a1c24;
-        padding: 15px;
+    
+    /* Sleek Cards */
+    div[data-testid="stMetric"] {
+        background-color: #161B22;
+        border: 1px solid #30363D;
+        border-radius: 12px;
+        padding: 15px 20px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+    
+    /* Primary Button Polish */
+    .stButton>button[kind="primary"] {
+        background: linear-gradient(90deg, #00D4AA 0%, #00A887 100%);
+        color: #0E1117;
+        font-weight: 700;
+        font-size: 1.1rem;
+        border: none;
         border-radius: 10px;
-        border: 1px solid #2d313e;
+        padding: 12px 24px;
+        transition: all 0.3s ease;
+    }
+    .stButton>button[kind="primary"]:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(0,212,170,0.4);
     }
 </style>
 """, unsafe_allow_html=True)
@@ -225,9 +251,9 @@ if "results_df" in st.session_state:
             names=itc_labels,
             hole=0.5,
             title="ITC Breakdown Structure",
-            color_discrete_sequence=['#00d4aa', '#ff4d4d', '#ff8c42']
+            color_discrete_sequence=['#00D4AA', '#FF4D4D', '#FF8C42']
         )
-        fig_donut.update_layout(margin=dict(t=40, b=0, l=0, r=0), height=300)
+        fig_donut.update_layout(margin=dict(t=40, b=0, l=0, r=0), height=300, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
         st.plotly_chart(fig_donut, use_container_width=True)
         
     with chart_col2:
@@ -241,9 +267,9 @@ if "results_df" in st.session_state:
             y="Count",
             title="Invoice Reconciliation Distribution",
             color="Status",
-            color_discrete_sequence=['#00d4aa', '#f5a623', '#ff4d4d', '#ff8c42']
+            color_discrete_sequence=['#00D4AA', '#F5A623', '#FF4D4D', '#FF8C42']
         )
-        fig_bar.update_layout(margin=dict(t=40, b=0, l=0, r=0), height=300, showlegend=False)
+        fig_bar.update_layout(margin=dict(t=40, b=0, l=0, r=0), height=300, showlegend=False, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
         st.plotly_chart(fig_bar, use_container_width=True)
         
     st.markdown("---")
@@ -313,12 +339,14 @@ if "results_df" in st.session_state:
         
     with col2:
         excel_path = "output/reconciliation_report.xlsx"
+        os.makedirs("output", exist_ok=True)
         results_df.to_excel(excel_path, index=False)
         with open(excel_path, "rb") as f:
             st.download_button("📗 Download Excel Audit Sheet", data=f.read(), file_name=f"reconciliation_{st.session_state['client_name']}.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
             
     with col3:
         pdf_path = "output/reconciliation_report.pdf"
+        os.makedirs("output", exist_ok=True)
         generate_pdf_report(pdf_path, st.session_state["client_name"], st.session_state["client_gstin"], st.session_state["financial_year"], st.session_state["return_period"], rec, itc, ai_insights)
         with open(pdf_path, "rb") as f:
             st.download_button("📕 Download PDF Client Report", data=f.read(), file_name=f"reconciliation_report_{st.session_state['client_name']}.pdf", mime="application/pdf", use_container_width=True)
