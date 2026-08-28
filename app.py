@@ -44,7 +44,6 @@ st.markdown(
 
 
 def show_gst_failure_debug(result: dict):
-    """Show portal debug screenshot + technical info when auto-fetch fails."""
     st.error(result.get("error", "Failed to connect to GST Portal."))
 
     page_url = result.get("page_url") or ""
@@ -91,7 +90,7 @@ with st.sidebar:
     st.divider()
     st.info(
         "Cloud tip: Use **Option A (Manual Upload)** for reliable demos. "
-        "Option B needs GST portal access from this server IP."
+        "Option B needs GST portal captcha issuance from this server IP."
     )
     st.caption("Built for CA Firms & Tax Professionals")
 
@@ -149,8 +148,9 @@ with tab_manual:
 
 with tab_auto:
     st.warning(
-        "Experimental on cloud hosting. If CAPTCHA fails, use the debug screenshot "
-        "to diagnose. Most reliable: run Option B locally, or use Option A."
+        "Experimental on cloud. If captcha does not appear on the GST page "
+        "(username/password only), the portal is not issuing captcha to this server. "
+        "Use Option A on Render, or run Option B locally."
     )
     st.markdown("### 🔒 Fetch GSTR-2B Directly from GST Portal")
 
@@ -176,7 +176,8 @@ with tab_auto:
             ):
                 try:
                     automation = GSTPortalAutomation()
-                    session_data = automation.fetch_login_captcha()
+                    # Pass username so portal can lazy-load captcha after typing it
+                    session_data = automation.fetch_login_captcha(username=gst_user)
                     if session_data.get("success"):
                         st.session_state["gst_session"] = session_data
                         st.success("Connected to GST Portal! Solve CAPTCHA below:")

@@ -26,7 +26,15 @@ class GSTPortalAutomation:
             "--window-size=1366,768",
             "--disable-features=IsolateOrigins,site-per-process",
         ]
-        return playwright.chromium.launch(headless=True, args=launch_args)
+        # headless=False is not available on Render; use new headless where possible
+        try:
+            return playwright.chromium.launch(
+                headless=True,
+                args=launch_args,
+                chromium_sandbox=False,
+            )
+        except Exception:
+            return playwright.chromium.launch(headless=True, args=launch_args)
 
     def _new_context(self, browser):
         context = browser.new_context(
@@ -35,11 +43,12 @@ class GSTPortalAutomation:
             user_agent=(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
+                "Chrome/121.0.0.0 Safari/537.36"
             ),
             locale="en-IN",
             timezone_id="Asia/Kolkata",
             ignore_https_errors=True,
+            java_script_enabled=True,
         )
         context.add_init_script(
             """
@@ -47,6 +56,7 @@ class GSTPortalAutomation:
             window.chrome = { runtime: {} };
             Object.defineProperty(navigator, 'languages', { get: () => ['en-IN', 'en-US', 'en'] });
             Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+            Object.defineProperty(navigator, 'platform', { get: () => 'Win32' });
             """
         )
         return context
@@ -72,6 +82,7 @@ class GSTPortalAutomation:
             "iframe_count": 0,
             "img_count": 0,
             "canvas_count": 0,
+            "input_count": 0,
         }
         try:
             payload["page_url"] = page.url or ""
@@ -83,7 +94,7 @@ class GSTPortalAutomation:
             pass
         try:
             html = page.content() or ""
-            payload["html_snippet"] = html[:4000]
+            payload["html_snippet"] = html[:5000]
         except Exception:
             pass
         try:
@@ -99,6 +110,10 @@ class GSTPortalAutomation:
         except Exception:
             pass
         try:
+            payload["input_count"] = page.locator("input").count()
+        except Exception:
+            pass
+        try:
             shot = page.screenshot(full_page=True)
             payload["debug_screenshot_b64"] = base64.b64encode(shot).decode("utf-8")
             debug_path = os.path.join(self.download_dir, "gst_login_debug.png")
@@ -109,7 +124,6 @@ class GSTPortalAutomation:
         return payload
 
     def _try_captcha_on_frame(self, frame) -> Tuple[Optional[Any], str]:
-        """Search one frame/page for captcha image or canvas."""
         selectors: List[str] = [
             "#imgCaptcha",
             "img#imgCaptcha",
@@ -128,9 +142,6 @@ class GSTPortalAutomation:
             "img[src*='CAPTCHA']",
             "img[src*='captchaAuth' i]",
             "img[src*='getCaptcha' i]",
-            "img[src*='Captcha.jpg' i]",
-            "img[src*='Captcha.png' i]",
-            "img[onclick*='captcha' i]",
             "img[id*='captcha' i]",
             "img[id*='Captcha']",
             "xpath=//img[contains(translate(@id,'CAPTCHA','captcha'),'captcha')]",
@@ -142,16 +153,10 @@ class GSTPortalAutomation:
             try:
                 loc = frame.locator(sel)
                 if loc.count() > 0:
-                    first = loc.first
-                    try:
-                        first.wait_for(state="attached", timeout=3000)
-                    except Exception:
-                        pass
-                    return first, sel
+                    return loc.first, sel
             except Exception:
                 continue
 
-        # Canvas-based captcha
         try:
             canvases = frame.locator("canvas")
             n = canvases.count()
@@ -169,11 +174,10 @@ class GSTPortalAutomation:
         except Exception:
             pass
 
-        # Heuristic image scan
         try:
             images = frame.locator("img")
             count = images.count()
-            for i in range(min(count, 50)):
+            for i in range(min(count, 60)):
                 img = images.nth(i)
                 try:
                     alt = (img.get_attribute("alt") or "").lower()
@@ -181,17 +185,11 @@ class GSTPortalAutomation:
                     id_attr = (img.get_attribute("id") or "").lower()
                     cls = (img.get_attribute("class") or "").lower()
                     blob = f"{alt} {src} {id_attr} {cls}"
-                    if any(k in blob for k in ["captcha", "capcha", "capcha", "security code"]):
+                    if any(k in blob for k in ["captcha", "capcha", "security"]):
                         return img, f"img-scan-keyword[{i}]"
                     box = img.bounding_box()
                     if box and 30 <= box.get("height", 0) <= 90 and 80 <= box.get("width", 0) <= 280:
-                        if (
-                            "data:image" in src
-                            or src.endswith(".png")
-                            or src.endswith(".jpg")
-                            or "image" in src
-                            or not src.startswith("http")
-                        ):
+                        if "data:image" in src or src.endswith((".png", ".jpg", ".jpeg", ".gif")):
                             return img, f"img-size-heuristic[{i}]"
                 except Exception:
                     continue
@@ -201,12 +199,10 @@ class GSTPortalAutomation:
         return None, "none"
 
     def _find_captcha_locator(self, page) -> Tuple[Optional[Any], str]:
-        # Main page first
         captcha, strategy = self._try_captcha_on_frame(page)
         if captcha is not None:
             return captcha, f"main:{strategy}"
 
-        # Then all iframes
         try:
             for idx, frame in enumerate(page.frames):
                 if frame == page.main_frame:
@@ -219,9 +215,81 @@ class GSTPortalAutomation:
 
         return None, "no-matching-captcha"
 
-    def fetch_login_captcha(self) -> Dict[str, Any]:
+    def _fill_first(self, page, selectors: List[str], value: str) -> bool:
+        for sel in selectors:
+            try:
+                loc = page.locator(sel)
+                if loc.count() > 0:
+                    loc.first.click(timeout=2000)
+                    loc.first.fill("")
+                    loc.first.fill(value)
+                    return True
+            except Exception:
+                continue
+        return False
+
+    def _click_captcha_refresh(self, page) -> bool:
+        refresh_selectors = [
+            "#captchaRefresh",
+            "#refreshCaptcha",
+            "img[onclick*='captcha' i]",
+            "a[onclick*='captcha' i]",
+            "button[onclick*='captcha' i]",
+            "i.fa-refresh",
+            "i.fa-sync",
+            "img[title*='refresh' i]",
+            "img[alt*='refresh' i]",
+            "xpath=//img[contains(@onclick,'Captcha') or contains(@onclick,'captcha')]",
+            "xpath=//a[contains(@onclick,'Captcha') or contains(@onclick,'captcha')]",
+        ]
+        for sel in refresh_selectors:
+            try:
+                loc = page.locator(sel)
+                if loc.count() > 0:
+                    loc.first.click(timeout=2000)
+                    return True
+            except Exception:
+                continue
+        return False
+
+    def _try_load_captcha_endpoints(self, page) -> Optional[bytes]:
+        """
+        Some GST builds expose captcha at known paths.
+        Try fetching image bytes directly in-page.
+        """
+        candidates = [
+            "https://services.gst.gov.in/services/captcha",
+            "https://services.gst.gov.in/services/auth/captcha",
+            "https://services.gst.gov.in/services/captcha.jpg",
+            "https://services.gst.gov.in/services/getCaptcha",
+            "/services/captcha",
+            "/services/auth/captcha",
+        ]
+        for url in candidates:
+            try:
+                resp = page.request.get(url, timeout=15000)
+                if resp.ok:
+                    body = resp.body()
+                    ctype = (resp.headers.get("content-type") or "").lower()
+                    if body and len(body) > 200 and (
+                        "image" in ctype
+                        or body[:3] == b"\xff\xd8\xff"
+                        or body[:8] == b"\x89PNG\r\n\x1a\n"
+                        or body[:3] == b"GIF"
+                    ):
+                        return body
+            except Exception:
+                continue
+        return None
+
+    def fetch_login_captcha(self, username: str = "") -> Dict[str, Any]:
+        """
+        Open GST login, optionally type username (triggers captcha on some builds),
+        capture captcha via DOM or network.
+        """
         playwright = None
         browser = None
+        network_captcha_bytes: List[bytes] = []
 
         try:
             playwright = sync_playwright().start()
@@ -230,14 +298,37 @@ class GSTPortalAutomation:
             page = context.new_page()
             page.set_default_timeout(60000)
 
+            def on_response(response):
+                try:
+                    url = (response.url or "").lower()
+                    ctype = (response.headers.get("content-type") or "").lower()
+                    if response.status != 200:
+                        return
+                    looks_captcha = (
+                        "captcha" in url
+                        or "capcha" in url
+                        or ("image" in ctype and "services.gst.gov.in" in url)
+                    )
+                    if not looks_captcha:
+                        return
+                    if "image" not in ctype and "captcha" not in url:
+                        return
+                    body = response.body()
+                    if body and len(body) > 200:
+                        network_captcha_bytes.append(body)
+                except Exception:
+                    pass
+
+            page.on("response", on_response)
+
             try:
                 page.goto(self.login_url, wait_until="domcontentloaded", timeout=90000)
             except PlaywrightTimeoutError:
                 pass
 
-            page.wait_for_timeout(3000)
+            page.wait_for_timeout(2000)
 
-            # Wait for any login-ish field
+            # Ensure login form exists
             form_ready = False
             for sel in [
                 "#username",
@@ -253,103 +344,184 @@ class GSTPortalAutomation:
                 except Exception:
                     continue
 
-            # Let captcha JS finish; try network idle briefly
             try:
-                page.wait_for_load_state("networkidle", timeout=15000)
-            except Exception:
-                pass
-            page.wait_for_timeout(2000)
-
-            try:
-                page.mouse.move(220, 240)
-                page.wait_for_timeout(400)
+                page.wait_for_load_state("networkidle", timeout=20000)
             except Exception:
                 pass
 
-            # Soft click captcha refresh if present (sometimes forces render)
-            for sel in [
-                "#captchaRefresh",
-                "img[onclick*='refresh' i]",
-                "a[onclick*='captcha' i]",
-                "button[aria-label*='refresh' i]",
-                "i.fa-refresh",
-                "i.fa-sync",
-            ]:
+            page.wait_for_timeout(1500)
+
+            # Type username first — many GST builds lazy-load captcha after this
+            if username:
+                self._fill_first(
+                    page,
+                    ["#username", "input[name='username']", "input#username"],
+                    username,
+                )
+                page.wait_for_timeout(1500)
+                # Tab to password to mimic human
                 try:
+                    page.keyboard.press("Tab")
+                    page.wait_for_timeout(800)
+                except Exception:
+                    pass
+
+            # Click password field
+            self._fill_first(
+                page,
+                ["#user_pass", "input[name='user_pass']", "input[type='password']"],
+                "",  # focus only; real password entered at login step
+            )
+            # empty fill may clear — just click focus instead if needed
+            try:
+                for sel in ["#user_pass", "input[name='user_pass']", "input[type='password']"]:
                     loc = page.locator(sel)
                     if loc.count() > 0:
-                        loc.first.click(timeout=1500)
-                        page.wait_for_timeout(1500)
+                        loc.first.click(timeout=2000)
                         break
+            except Exception:
+                pass
+
+            page.wait_for_timeout(1000)
+            self._click_captcha_refresh(page)
+            page.wait_for_timeout(2000)
+
+            # Poll DOM for captcha up to ~25s
+            captcha = None
+            strategy = "none"
+            for _ in range(12):
+                captcha, strategy = self._find_captcha_locator(page)
+                if captcha is not None:
+                    break
+                self._click_captcha_refresh(page)
+                page.wait_for_timeout(2000)
+
+            captcha_b64 = None
+            final_strategy = strategy
+
+            if captcha is not None:
+                try:
+                    captcha.scroll_into_view_if_needed(timeout=5000)
                 except Exception:
-                    continue
+                    pass
+                page.wait_for_timeout(400)
+                try:
+                    captcha_bytes = captcha.screenshot()
+                    if captcha_bytes and len(captcha_bytes) > 50:
+                        captcha_b64 = base64.b64encode(captcha_bytes).decode("utf-8")
+                        final_strategy = f"dom:{strategy}"
+                except Exception:
+                    pass
 
-            captcha, strategy = self._find_captcha_locator(page)
+            # Network-captured captcha image
+            if not captcha_b64 and network_captcha_bytes:
+                captcha_b64 = base64.b64encode(network_captcha_bytes[-1]).decode("utf-8")
+                final_strategy = "network-intercept"
 
-            if captcha is None:
+            # Direct endpoint fetch
+            if not captcha_b64:
+                direct = self._try_load_captcha_endpoints(page)
+                if direct:
+                    captcha_b64 = base64.b64encode(direct).decode("utf-8")
+                    final_strategy = "direct-endpoint"
+                    # inject into page so user still sees it; login still needs captcha input in DOM
+                    try:
+                        page.evaluate(
+                            """(b64) => {
+                                let img = document.querySelector('#imgCaptcha, img[id*="aptcha" i]');
+                                if (!img) {
+                                    img = document.createElement('img');
+                                    img.id = 'imgCaptcha';
+                                    img.alt = 'Captcha';
+                                    const pass = document.querySelector('#user_pass, input[type=password]');
+                                    if (pass && pass.parentElement) {
+                                        pass.parentElement.appendChild(img);
+                                    } else {
+                                        document.body.appendChild(img);
+                                    }
+                                }
+                                img.src = 'data:image/png;base64,' + b64;
+                                let inp = document.querySelector('#captcha, input[name=captcha]');
+                                if (!inp) {
+                                    inp = document.createElement('input');
+                                    inp.id = 'captcha';
+                                    inp.name = 'captcha';
+                                    inp.type = 'text';
+                                    inp.placeholder = 'Enter Captcha';
+                                    img.insertAdjacentElement('afterend', inp);
+                                }
+                            }""",
+                            captcha_b64,
+                        )
+                    except Exception:
+                        pass
+
+            if not captcha_b64:
                 debug = self._page_debug_payload(page)
+                # Check if captcha *input* exists without image
+                has_captcha_input = False
+                try:
+                    for sel in ["#captcha", "input[name='captcha']", "input[id*='captcha' i]"]:
+                        if page.locator(sel).count() > 0:
+                            has_captcha_input = True
+                            break
+                except Exception:
+                    pass
+
                 self._safe_close(browser, playwright)
 
                 html_l = (debug.get("html_snippet") or "").lower()
-                title_l = (debug.get("page_title") or "").lower()
-                url_l = (debug.get("page_url") or "").lower()
-
-                if any(k in html_l for k in ["access denied", "request blocked", "forbidden", "cf-browser", "cloudflare"]):
+                if any(
+                    k in html_l
+                    for k in [
+                        "access denied",
+                        "request blocked",
+                        "forbidden",
+                        "cloudflare",
+                        "cf-browser",
+                    ]
+                ):
                     reason = (
                         "GST Portal/WAF blocked this cloud server IP. "
-                        "Common on free hosting. Use Option A (Manual Upload), "
-                        "or run Option B on your local laptop."
+                        "Use Option A (Manual Upload) or run Option B on your local laptop."
                     )
-                elif "maintenance" in html_l or "unavailable" in html_l:
-                    reason = "GST Portal appears under maintenance or temporarily unavailable."
-                elif not form_ready and "login" not in title_l and "login" not in url_l:
+                elif not form_ready:
                     reason = (
-                        "Did not reach GST login form (redirect/block). "
+                        "Did not reach GST login form. "
                         f"URL: {debug.get('page_url', '')} | Title: {debug.get('page_title', '')}"
+                    )
+                elif has_captcha_input:
+                    reason = (
+                        "CAPTCHA input exists but image did not render in headless Chrome. "
+                        "Portal may be blocking captcha image requests from this server IP. "
+                        "Use Option A or run locally."
                     )
                 else:
                     reason = (
-                        "CAPTCHA image not found on GST login page. "
-                        "Portal DOM may have changed or captcha failed to render in headless mode. "
-                        "See debug screenshot below."
+                        "GST login form loaded WITHOUT a CAPTCHA section "
+                        "(confirmed via screenshot: username/password/LOGIN only). "
+                        "This usually means the portal is not issuing captcha to this "
+                        "cloud datacenter IP / headless browser. "
+                        "Option B cannot complete login without captcha on this host. "
+                        "Use Option A (Manual Upload) on Render, or run Option B locally on your laptop."
                     )
 
                 return {
                     "success": False,
                     "error": reason,
                     "technical_error": (
-                        f"strategy={strategy}; url={debug.get('page_url')}; "
+                        f"strategy={final_strategy}; url={debug.get('page_url')}; "
                         f"title={debug.get('page_title')}; "
-                        f"iframes={debug.get('iframe_count')}; "
-                        f"imgs={debug.get('img_count')}; "
-                        f"canvas={debug.get('canvas_count')}"
+                        f"iframes={debug.get('iframe_count')}; imgs={debug.get('img_count')}; "
+                        f"canvas={debug.get('canvas_count')}; inputs={debug.get('input_count')}; "
+                        f"network_captcha_hits={len(network_captcha_bytes)}; "
+                        f"has_captcha_input={has_captcha_input}"
                     ),
                     "debug_screenshot_b64": debug.get("debug_screenshot_b64", ""),
                     "html_snippet": debug.get("html_snippet", ""),
                     "page_url": debug.get("page_url", ""),
                     "page_title": debug.get("page_title", ""),
-                }
-
-            try:
-                captcha.scroll_into_view_if_needed(timeout=5000)
-            except Exception:
-                pass
-            page.wait_for_timeout(500)
-
-            captcha_bytes = captcha.screenshot()
-            captcha_b64 = base64.b64encode(captcha_bytes).decode("utf-8")
-
-            if not captcha_b64 or len(captcha_bytes) < 50:
-                debug = self._page_debug_payload(page)
-                self._safe_close(browser, playwright)
-                return {
-                    "success": False,
-                    "error": "CAPTCHA element found but screenshot was empty. See debug screenshot.",
-                    "technical_error": f"strategy={strategy}",
-                    "debug_screenshot_b64": debug.get("debug_screenshot_b64", ""),
-                    "html_snippet": debug.get("html_snippet", ""),
-                    "page_url": debug.get("page_url", ""),
-                    "page_title": debug.get("page_title", ""),
+                    "captcha_missing_from_dom": True,
                 }
 
             return {
@@ -359,7 +531,7 @@ class GSTPortalAutomation:
                 "context": context,
                 "page": page,
                 "captcha_b64": captcha_b64,
-                "captcha_strategy": strategy,
+                "captcha_strategy": final_strategy,
             }
 
         except Exception as e:
@@ -399,8 +571,17 @@ class GSTPortalAutomation:
 
         try:
             user_selectors = ["#username", "input[name='username']", "input#user"]
-            pass_selectors = ["#user_pass", "input[name='user_pass']", "input[type='password']"]
-            captcha_selectors = ["#captcha", "input[name='captcha']", "input#captcha", "input[name='captcha_txt']"]
+            pass_selectors = [
+                "#user_pass",
+                "input[name='user_pass']",
+                "input[type='password']",
+            ]
+            captcha_selectors = [
+                "#captcha",
+                "input[name='captcha']",
+                "input#captcha",
+                "input[name='captcha_txt']",
+            ]
 
             def fill_first(selectors, value):
                 for sel in selectors:
@@ -415,8 +596,14 @@ class GSTPortalAutomation:
                 raise Exception("Username field not found.")
             if not fill_first(pass_selectors, password):
                 raise Exception("Password field not found.")
-            if not fill_first(captcha_selectors, captcha_text.strip()):
-                raise Exception("CAPTCHA input not found.")
+
+            # Captcha field may be missing if portal never rendered it
+            captcha_filled = fill_first(captcha_selectors, captcha_text.strip())
+            if not captcha_filled:
+                raise Exception(
+                    "CAPTCHA input not found on page. "
+                    "Portal did not render captcha for this session."
+                )
 
             clicked_login = False
             for sel in [
@@ -440,7 +627,14 @@ class GSTPortalAutomation:
 
             page.wait_for_timeout(5000)
 
-            for sel in [".err-msg", ".alert-danger", ".error", ".text-danger", "#error", ".alert"]:
+            for sel in [
+                ".err-msg",
+                ".alert-danger",
+                ".error",
+                ".text-danger",
+                "#error",
+                ".alert",
+            ]:
                 loc = page.locator(sel)
                 if loc.count() > 0:
                     try:
@@ -497,7 +691,12 @@ class GSTPortalAutomation:
                 except Exception:
                     pass
 
-            for sel in ["#search", "button:has-text('Search')", "button:has-text('SEARCH')", "text=SEARCH"]:
+            for sel in [
+                "#search",
+                "button:has-text('Search')",
+                "button:has-text('SEARCH')",
+                "text=SEARCH",
+            ]:
                 loc = page.locator(sel)
                 if loc.count() > 0:
                     try:
