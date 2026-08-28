@@ -1,7 +1,7 @@
 import os
 import base64
 import re
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, List, Tuple, Optional
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 
 
@@ -26,11 +26,7 @@ class GSTPortalAutomation:
             "--window-size=1366,768",
             "--disable-features=IsolateOrigins,site-per-process",
         ]
-
-        return playwright.chromium.launch(
-            headless=True,
-            args=launch_args,
-        )
+        return playwright.chromium.launch(headless=True, args=launch_args)
 
     def _new_context(self, browser):
         context = browser.new_context(
@@ -43,14 +39,14 @@ class GSTPortalAutomation:
             ),
             locale="en-IN",
             timezone_id="Asia/Kolkata",
+            ignore_https_errors=True,
         )
-        # Reduce obvious automation flags
         context.add_init_script(
             """
             Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
             window.chrome = { runtime: {} };
-            Object.defineProperty(navigator, 'languages', { get: () => ['en-IN', 'en'] });
-            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });
+            Object.defineProperty(navigator, 'languages', { get: () => ['en-IN', 'en-US', 'en'] });
+            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
             """
         )
         return context
@@ -68,12 +64,14 @@ class GSTPortalAutomation:
             pass
 
     def _page_debug_payload(self, page) -> Dict[str, Any]:
-        """Capture screenshot + HTML snippet when selectors fail."""
         payload: Dict[str, Any] = {
             "page_url": "",
             "page_title": "",
             "html_snippet": "",
             "debug_screenshot_b64": "",
+            "iframe_count": 0,
+            "img_count": 0,
+            "canvas_count": 0,
         }
         try:
             payload["page_url"] = page.url or ""
@@ -85,13 +83,24 @@ class GSTPortalAutomation:
             pass
         try:
             html = page.content() or ""
-            payload["html_snippet"] = html[:2500]
+            payload["html_snippet"] = html[:4000]
+        except Exception:
+            pass
+        try:
+            payload["iframe_count"] = page.locator("iframe").count()
+        except Exception:
+            pass
+        try:
+            payload["img_count"] = page.locator("img").count()
+        except Exception:
+            pass
+        try:
+            payload["canvas_count"] = page.locator("canvas").count()
         except Exception:
             pass
         try:
             shot = page.screenshot(full_page=True)
             payload["debug_screenshot_b64"] = base64.b64encode(shot).decode("utf-8")
-            # Also save to disk for Render shell/log debugging
             debug_path = os.path.join(self.download_dir, "gst_login_debug.png")
             with open(debug_path, "wb") as f:
                 f.write(shot)
@@ -99,11 +108,8 @@ class GSTPortalAutomation:
             pass
         return payload
 
-    def _find_captcha_locator(self, page):
-        """
-        Try multiple known GST portal CAPTCHA patterns.
-        Returns (locator, strategy_name) or (None, reason).
-        """
+    def _try_captcha_on_frame(self, frame) -> Tuple[Optional[Any], str]:
+        """Search one frame/page for captcha image or canvas."""
         selectors: List[str] = [
             "#imgCaptcha",
             "img#imgCaptcha",
@@ -111,43 +117,63 @@ class GSTPortalAutomation:
             "img#captchaImg",
             "img#captcha",
             "#captcha_image",
+            "#captchaImage",
             "img.captcha",
             "img[alt='Captcha']",
             "img[alt='CAPTCHA']",
-            "img[alt*='Captcha']",
-            "img[alt*='captcha']",
-            "img[src*='captcha']",
+            "img[alt*='Captcha' i]",
+            "img[alt*='captcha' i]",
+            "img[src*='captcha' i]",
             "img[src*='Captcha']",
             "img[src*='CAPTCHA']",
-            "img[src*='captchaAuth']",
-            "img[src*='getCaptcha']",
-            "//img[contains(@id,'aptcha')]",
-            "//img[contains(@src,'aptcha')]",
-            "//img[contains(@alt,'aptcha')]",
+            "img[src*='captchaAuth' i]",
+            "img[src*='getCaptcha' i]",
+            "img[src*='Captcha.jpg' i]",
+            "img[src*='Captcha.png' i]",
+            "img[onclick*='captcha' i]",
+            "img[id*='captcha' i]",
+            "img[id*='Captcha']",
+            "xpath=//img[contains(translate(@id,'CAPTCHA','captcha'),'captcha')]",
+            "xpath=//img[contains(translate(@src,'CAPTCHA','captcha'),'captcha')]",
+            "xpath=//img[contains(translate(@alt,'CAPTCHA','captcha'),'captcha')]",
         ]
 
         for sel in selectors:
             try:
-                if sel.startswith("//"):
-                    loc = page.locator(f"xpath={sel}")
-                else:
-                    loc = page.locator(sel)
+                loc = frame.locator(sel)
                 if loc.count() > 0:
                     first = loc.first
                     try:
-                        if first.is_visible(timeout=2000):
-                            return first, sel
+                        first.wait_for(state="attached", timeout=3000)
                     except Exception:
-                        # Some captcha imgs report not visible briefly; still try
-                        return first, sel
+                        pass
+                    return first, sel
             except Exception:
                 continue
 
-        # Fallback: scan all images and pick likely captcha by src/alt/size
+        # Canvas-based captcha
         try:
-            images = page.locator("img")
+            canvases = frame.locator("canvas")
+            n = canvases.count()
+            for i in range(min(n, 10)):
+                c = canvases.nth(i)
+                try:
+                    box = c.bounding_box()
+                    if not box:
+                        continue
+                    w, h = box.get("width", 0), box.get("height", 0)
+                    if 60 <= w <= 300 and 20 <= h <= 100:
+                        return c, f"canvas[{i}]"
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+        # Heuristic image scan
+        try:
+            images = frame.locator("img")
             count = images.count()
-            for i in range(min(count, 40)):
+            for i in range(min(count, 50)):
                 img = images.nth(i)
                 try:
                     alt = (img.get_attribute("alt") or "").lower()
@@ -155,20 +181,43 @@ class GSTPortalAutomation:
                     id_attr = (img.get_attribute("id") or "").lower()
                     cls = (img.get_attribute("class") or "").lower()
                     blob = f"{alt} {src} {id_attr} {cls}"
-                    if "captcha" in blob or "capcha" in blob:
-                        return img, f"img-scan[{i}]"
-                    # GST captchas are often small wide images near login form
+                    if any(k in blob for k in ["captcha", "capcha", "capcha", "security code"]):
+                        return img, f"img-scan-keyword[{i}]"
                     box = img.bounding_box()
-                    if box and 40 <= box.get("height", 0) <= 80 and 100 <= box.get("width", 0) <= 250:
-                        # Near password field preference handled by scan order
-                        if "data:" in src or "captcha" in src or src.endswith(".png") or "image" in src:
+                    if box and 30 <= box.get("height", 0) <= 90 and 80 <= box.get("width", 0) <= 280:
+                        if (
+                            "data:image" in src
+                            or src.endswith(".png")
+                            or src.endswith(".jpg")
+                            or "image" in src
+                            or not src.startswith("http")
+                        ):
                             return img, f"img-size-heuristic[{i}]"
                 except Exception:
                     continue
         except Exception:
             pass
 
-        return None, "no-matching-img"
+        return None, "none"
+
+    def _find_captcha_locator(self, page) -> Tuple[Optional[Any], str]:
+        # Main page first
+        captcha, strategy = self._try_captcha_on_frame(page)
+        if captcha is not None:
+            return captcha, f"main:{strategy}"
+
+        # Then all iframes
+        try:
+            for idx, frame in enumerate(page.frames):
+                if frame == page.main_frame:
+                    continue
+                captcha, strategy = self._try_captcha_on_frame(frame)
+                if captcha is not None:
+                    return captcha, f"iframe[{idx}]:{strategy}"
+        except Exception:
+            pass
+
+        return None, "no-matching-captcha"
 
     def fetch_login_captcha(self) -> Dict[str, Any]:
         playwright = None
@@ -181,34 +230,59 @@ class GSTPortalAutomation:
             page = context.new_page()
             page.set_default_timeout(60000)
 
-            # Navigate — portal is slow from cloud IPs
             try:
                 page.goto(self.login_url, wait_until="domcontentloaded", timeout=90000)
             except PlaywrightTimeoutError:
-                # Continue even on timeout; DOM may still be usable
                 pass
 
-            page.wait_for_timeout(2500)
+            page.wait_for_timeout(3000)
 
-            # Wait for login form as proof we hit the real login page
+            # Wait for any login-ish field
             form_ready = False
-            for sel in ["#username", "input[name='username']", "input#username", "input[type='text']"]:
+            for sel in [
+                "#username",
+                "input[name='username']",
+                "input#username",
+                "input[type='password']",
+                "input[name='user_pass']",
+            ]:
                 try:
-                    page.wait_for_selector(sel, timeout=15000)
+                    page.wait_for_selector(sel, timeout=20000)
                     form_ready = True
                     break
                 except Exception:
                     continue
 
-            # Extra settle time for captcha image JS
-            page.wait_for_timeout(2000)
-
-            # Sometimes captcha appears only after a tiny interaction
+            # Let captcha JS finish; try network idle briefly
             try:
-                page.mouse.move(200, 200)
-                page.wait_for_timeout(500)
+                page.wait_for_load_state("networkidle", timeout=15000)
             except Exception:
                 pass
+            page.wait_for_timeout(2000)
+
+            try:
+                page.mouse.move(220, 240)
+                page.wait_for_timeout(400)
+            except Exception:
+                pass
+
+            # Soft click captcha refresh if present (sometimes forces render)
+            for sel in [
+                "#captchaRefresh",
+                "img[onclick*='refresh' i]",
+                "a[onclick*='captcha' i]",
+                "button[aria-label*='refresh' i]",
+                "i.fa-refresh",
+                "i.fa-sync",
+            ]:
+                try:
+                    loc = page.locator(sel)
+                    if loc.count() > 0:
+                        loc.first.click(timeout=1500)
+                        page.wait_for_timeout(1500)
+                        break
+                except Exception:
+                    continue
 
             captcha, strategy = self._find_captcha_locator(page)
 
@@ -216,15 +290,15 @@ class GSTPortalAutomation:
                 debug = self._page_debug_payload(page)
                 self._safe_close(browser, playwright)
 
-                # Friendly diagnosis from HTML/title
                 html_l = (debug.get("html_snippet") or "").lower()
                 title_l = (debug.get("page_title") or "").lower()
                 url_l = (debug.get("page_url") or "").lower()
 
-                if "access denied" in html_l or "blocked" in html_l or "forbidden" in html_l:
+                if any(k in html_l for k in ["access denied", "request blocked", "forbidden", "cf-browser", "cloudflare"]):
                     reason = (
-                        "GST Portal blocked this server IP (common on cloud). "
-                        "Try again later or use Option A (Manual Upload)."
+                        "GST Portal/WAF blocked this cloud server IP. "
+                        "Common on free hosting. Use Option A (Manual Upload), "
+                        "or run Option B on your local laptop."
                     )
                 elif "maintenance" in html_l or "unavailable" in html_l:
                     reason = "GST Portal appears under maintenance or temporarily unavailable."
@@ -236,20 +310,26 @@ class GSTPortalAutomation:
                 else:
                     reason = (
                         "CAPTCHA image not found on GST login page. "
-                        "Portal DOM may have changed or captcha failed to render in headless mode."
+                        "Portal DOM may have changed or captcha failed to render in headless mode. "
+                        "See debug screenshot below."
                     )
 
                 return {
                     "success": False,
                     "error": reason,
-                    "technical_error": f"strategy={strategy}; url={debug.get('page_url')}; title={debug.get('page_title')}",
+                    "technical_error": (
+                        f"strategy={strategy}; url={debug.get('page_url')}; "
+                        f"title={debug.get('page_title')}; "
+                        f"iframes={debug.get('iframe_count')}; "
+                        f"imgs={debug.get('img_count')}; "
+                        f"canvas={debug.get('canvas_count')}"
+                    ),
                     "debug_screenshot_b64": debug.get("debug_screenshot_b64", ""),
                     "html_snippet": debug.get("html_snippet", ""),
                     "page_url": debug.get("page_url", ""),
                     "page_title": debug.get("page_title", ""),
                 }
 
-            # Screenshot just the captcha element
             try:
                 captcha.scroll_into_view_if_needed(timeout=5000)
             except Exception:
@@ -264,10 +344,12 @@ class GSTPortalAutomation:
                 self._safe_close(browser, playwright)
                 return {
                     "success": False,
-                    "error": "CAPTCHA element found but screenshot was empty.",
+                    "error": "CAPTCHA element found but screenshot was empty. See debug screenshot.",
                     "technical_error": f"strategy={strategy}",
                     "debug_screenshot_b64": debug.get("debug_screenshot_b64", ""),
                     "html_snippet": debug.get("html_snippet", ""),
+                    "page_url": debug.get("page_url", ""),
+                    "page_title": debug.get("page_title", ""),
                 }
 
             return {
@@ -281,14 +363,7 @@ class GSTPortalAutomation:
             }
 
         except Exception as e:
-            try:
-                if browser:
-                    # best-effort debug if page exists
-                    pass
-            except Exception:
-                pass
             self._safe_close(browser, playwright)
-
             err = str(e)
             if (
                 "Executable doesn't exist" in err
@@ -297,12 +372,10 @@ class GSTPortalAutomation:
             ):
                 friendly = (
                     "Browser engine not available on this server. "
-                    "Use the Render Docker deployment for GST Auto-Fetch, "
-                    "or use Option A (Manual Upload)."
+                    "Use Render Docker for GST Auto-Fetch, or Option A (Manual Upload)."
                 )
             else:
                 friendly = f"Could not open GST Portal login page. Details: {err}"
-
             return {"success": False, "error": friendly, "technical_error": err}
 
     def login_and_download_gstr2b(
@@ -327,7 +400,7 @@ class GSTPortalAutomation:
         try:
             user_selectors = ["#username", "input[name='username']", "input#user"]
             pass_selectors = ["#user_pass", "input[name='user_pass']", "input[type='password']"]
-            captcha_selectors = ["#captcha", "input[name='captcha']", "input#captcha"]
+            captcha_selectors = ["#captcha", "input[name='captcha']", "input#captcha", "input[name='captcha_txt']"]
 
             def fill_first(selectors, value):
                 for sel in selectors:
@@ -367,7 +440,6 @@ class GSTPortalAutomation:
 
             page.wait_for_timeout(5000)
 
-            # Detect login errors
             for sel in [".err-msg", ".alert-danger", ".error", ".text-danger", "#error", ".alert"]:
                 loc = page.locator(sel)
                 if loc.count() > 0:
@@ -391,14 +463,11 @@ class GSTPortalAutomation:
                         if "GST Portal login error" in str(ex):
                             raise
 
-            # Navigate returns dashboard
             page.goto(self.dashboard_url, wait_until="domcontentloaded", timeout=90000)
             page.wait_for_timeout(3000)
 
-            # If still on login page, session failed
             cur = (page.url or "").lower()
             if "login" in cur and "auth" not in cur:
-                debug = self._page_debug_payload(page)
                 raise Exception(
                     "Login did not succeed (still on login page). "
                     "Wrong credentials/CAPTCHA, or portal blocked the session."
@@ -438,7 +507,10 @@ class GSTPortalAutomation:
                     except Exception:
                         continue
 
-            save_name = f"gstr2b_{re.sub(r'[^A-Za-z0-9_]+', '_', username)}_{fy}_{str(period).replace(' ', '_')}.json"
+            save_name = (
+                f"gstr2b_{re.sub(r'[^A-Za-z0-9_]+', '_', username)}_"
+                f"{fy}_{str(period).replace(' ', '_')}.json"
+            )
             save_path = os.path.join(self.download_dir, save_name)
 
             click_targets = [
@@ -479,7 +551,6 @@ class GSTPortalAutomation:
                         raise Exception("Could not find a GSTR-2B/JSON download button.")
                 download = di.value
             except Exception as ex:
-                debug = self._page_debug_payload(page)
                 raise Exception(
                     "Logged in, but could not auto-download GSTR-2B JSON. "
                     "GST portal buttons may have changed for this account/period. "
@@ -492,7 +563,6 @@ class GSTPortalAutomation:
                 raise Exception("Download completed but file is empty/invalid.")
 
             self._safe_close(browser, playwright)
-
             return {"success": True, "file_path": save_path}
 
         except Exception as e:
