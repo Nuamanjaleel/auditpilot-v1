@@ -46,32 +46,20 @@ st.markdown(
 def show_gst_failure_debug(result: dict):
     st.error(result.get("error", "Failed to connect to GST Portal."))
 
-    page_url = result.get("page_url") or ""
-    page_title = result.get("page_title") or ""
     tech = result.get("technical_error") or ""
-    html_snippet = result.get("html_snippet") or ""
     shot_b64 = result.get("debug_screenshot_b64") or ""
 
-    if page_url or page_title:
-        st.caption(f"**Page URL:** `{page_url}`")
-        st.caption(f"**Page title:** `{page_title}`")
-
-    if shot_b64:
-        st.warning("Debug screenshot of what the server actually loaded:")
+    if shot_b64 and not result.get("cloud_blocked"):
+        st.warning("Debug screenshot of server browser:")
         st.image(
             f"data:image/png;base64,{shot_b64}",
-            caption="GST portal page as seen by Render (headless Chrome)",
+            caption="GST portal page loaded by server",
             use_container_width=True,
         )
-    else:
-        st.info("No debug screenshot was captured (browser may have crashed before paint).")
 
-    with st.expander("Technical details", expanded=True):
+    with st.expander("Technical details", expanded=False):
         if tech:
             st.code(tech)
-        if html_snippet:
-            st.markdown("**HTML snippet (first 4000 chars):**")
-            st.code(html_snippet[:4000])
 
 
 with st.sidebar:
@@ -82,15 +70,16 @@ with st.sidebar:
     st.markdown(
         """
     1. **Step 1:** Configure Client Details.  
-    2. **Step 2:** Upload GSTR-2B (**recommended**) or try Auto-Fetch.  
+    2. **Step 2:** Upload GSTR-2B (**Option A**) or Auto-Fetch (**Option B**).  
     3. **Step 3:** Upload Tally Purchase Register.  
     4. **Step 4:** Click **Run Reconciliation**.
     """
     )
     st.divider()
     st.info(
-        "Cloud tip: Use **Option A (Manual Upload)** for reliable demos. "
-        "Option B needs GST portal captcha issuance from this server IP."
+        "💡 **Deployment Note:**\n"
+        "- **Option A (Manual Upload):** Works 100% on Cloud & Local.\n"
+        "- **Option B (Auto-Fetch):** Works best on Local Laptop (Indian Broadband IP)."
     )
     st.caption("Built for CA Firms & Tax Professionals")
 
@@ -129,7 +118,7 @@ gstr2b_file_obj = None
 tally_file = None
 
 with tab_manual:
-    st.success("Recommended for live demos and production use.")
+    st.success("Recommended for Cloud Demos and Instant Reconciliation.")
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("**📄 GSTR-2B JSON** *(from GST Portal)*")
@@ -147,10 +136,9 @@ with tab_manual:
             tally_file = tally_file_manual
 
 with tab_auto:
-    st.warning(
-        "Experimental on cloud. If captcha does not appear on the GST page "
-        "(username/password only), the portal is not issuing captcha to this server. "
-        "Use Option A on Render, or run Option B locally."
+    st.info(
+        "Direct Auto-Fetch logs into `services.gst.gov.in` using Playwright. "
+        "For cloud security reasons, if government firewalls block cloud IPs, use Option A."
     )
     st.markdown("### 🔒 Fetch GSTR-2B Directly from GST Portal")
 
@@ -171,28 +159,18 @@ with tab_auto:
             st.session_state.pop("gst_session", None)
             st.session_state.pop("gst_last_failure", None)
 
-            with st.spinner(
-                "Connecting to GST Portal (30–90 sec on free tier). Please wait..."
-            ):
+            with st.spinner("Connecting to GST Portal... Please wait..."):
                 try:
                     automation = GSTPortalAutomation()
-                    # Pass username so portal can lazy-load captcha after typing it
                     session_data = automation.fetch_login_captcha(username=gst_user)
                     if session_data.get("success"):
                         st.session_state["gst_session"] = session_data
                         st.success("Connected to GST Portal! Solve CAPTCHA below:")
-                        if session_data.get("captcha_strategy"):
-                            st.caption(
-                                f"CAPTCHA detection strategy: `{session_data['captcha_strategy']}`"
-                            )
                     else:
                         st.session_state["gst_last_failure"] = session_data
                 except Exception as e:
                     st.session_state["gst_last_failure"] = {
-                        "error": (
-                            "GST Auto-Fetch crashed on this server. "
-                            "Please use Option A: Manual File Upload."
-                        ),
+                        "error": f"GST Auto-Fetch Error: {str(e)}",
                         "technical_error": str(e),
                     }
 
@@ -243,11 +221,7 @@ with tab_auto:
                             st.error(download_res.get("error", "Download failed."))
                             st.session_state.pop("gst_session", None)
                     except Exception as e:
-                        st.error(
-                            "Auto-fetch failed. Please use Option A: Manual Upload."
-                        )
-                        with st.expander("Technical details"):
-                            st.code(str(e))
+                        st.error(f"Auto-fetch failed: {str(e)}")
                         st.session_state.pop("gst_session", None)
 
     if "fetched_gstr2b_path" in st.session_state:
