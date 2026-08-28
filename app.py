@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import json
 import os
 import plotly.express as px
 from core.gstr2b_parser import parse_gstr2b
@@ -21,6 +20,32 @@ st.set_page_config(
 )
 
 
+# ─── CSS: keep Share + menu, hide star/github if possible ───────
+st.markdown("""
+<style>
+    footer {visibility: hidden;}
+    .stDeployButton {display: none !important;}
+
+    a[href*="github.com"] {display: none !important;}
+    button[title*="Star"], a[aria-label*="Star"], button[aria-label*="Star"] {
+        display: none !important;
+    }
+
+    header[data-testid="stHeader"] {
+        background: rgba(14, 17, 23, 0.75);
+        backdrop-filter: blur(8px);
+    }
+
+    div[data-testid="stMetric"] {
+        background-color: #161B22;
+        border: 1px solid #30363D;
+        border-radius: 10px;
+        padding: 14px;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+
 # ─── SIDEBAR ───────────────────────────────────────────────────
 with st.sidebar:
     st.title("🏛️ AuditPilot V1.5")
@@ -29,12 +54,13 @@ with st.sidebar:
 
     st.markdown("### 📌 Navigation & Help")
     st.markdown("""
-    1. **Step 1:** Configure Client Details.
-    2. **Step 2:** Upload GSTR-2B or Fetch from GST Portal.
-    3. **Step 3:** Upload Tally Purchase Register.
-    4. **Step 4:** Click **Run Reconciliation** to view audit reports.
+    1. **Step 1:** Configure Client Details.  
+    2. **Step 2:** Upload GSTR-2B (**recommended**) or try Auto-Fetch.  
+    3. **Step 3:** Upload Tally Purchase Register.  
+    4. **Step 4:** Click **Run Reconciliation**.
     """)
     st.divider()
+    st.info("Cloud tip: Use **Option A (Manual Upload)** for reliable demos. Option B works best on local laptop.")
     st.caption("Built for CA Firms & Tax Professionals")
 
 
@@ -64,6 +90,7 @@ gstr2b_file_obj = None
 tally_file = None
 
 with tab_manual:
+    st.success("Recommended for live demos and Streamlit Cloud.")
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("**📄 GSTR-2B JSON** *(from GST Portal)*")
@@ -77,7 +104,9 @@ with tab_manual:
             tally_file = tally_file_manual
 
 with tab_auto:
+    st.warning("Experimental on cloud hosting. If this fails, use Option A. For full auto-login testing, run the app locally.")
     st.markdown("### 🔒 Fetch GSTR-2B Directly from GST Portal")
+
     col_cred1, col_cred2 = st.columns(2)
     with col_cred1:
         gst_user = st.text_input("GST Portal Username", placeholder="e.g. sharma_tax")
@@ -89,17 +118,29 @@ with tab_auto:
             st.error("Please enter Username and Password first.")
         else:
             with st.spinner("Connecting to GST Portal..."):
-                automation = GSTPortalAutomation()
-                session_data = automation.fetch_login_captcha()
-                if session_data["success"]:
-                    st.session_state["gst_session"] = session_data
-                    st.success("Connected to GST Portal! Solve CAPTCHA below:")
-                else:
-                    st.error(f"Failed to connect: {session_data.get('error')}")
+                try:
+                    automation = GSTPortalAutomation()
+                    session_data = automation.fetch_login_captcha()
+                    if session_data.get("success"):
+                        st.session_state["gst_session"] = session_data
+                        st.success("Connected to GST Portal! Solve CAPTCHA below:")
+                    else:
+                        st.error(session_data.get("error", "Failed to connect to GST Portal."))
+                        if session_data.get("technical_error"):
+                            with st.expander("Technical details"):
+                                st.code(session_data["technical_error"])
+                except Exception as e:
+                    st.error(
+                        "GST Auto-Fetch is unavailable on this server. "
+                        "Please use Option A: Manual File Upload."
+                    )
+                    with st.expander("Technical details"):
+                        st.code(str(e))
 
-    if "gst_session" in st.session_state:
+    if "gst_session" in st.session_state and st.session_state["gst_session"].get("success"):
         session_data = st.session_state["gst_session"]
-        st.image(f"data:image/png;base64,{session_data['captcha_b64']}", caption="GST Portal CAPTCHA")
+        if session_data.get("captcha_b64"):
+            st.image(f"data:image/png;base64,{session_data['captcha_b64']}", caption="GST Portal CAPTCHA")
 
         captcha_input = st.text_input("Enter 6-character CAPTCHA shown above:", max_chars=6)
 
@@ -108,20 +149,25 @@ with tab_auto:
                 st.error("Please enter the CAPTCHA text.")
             else:
                 with st.spinner("Logging in and downloading GSTR-2B JSON..."):
-                    automation = GSTPortalAutomation()
-                    download_res = automation.login_and_download_gstr2b(
-                        session_data,
-                        gst_user,
-                        gst_pass,
-                        captcha_input,
-                        financial_year,
-                        return_period
-                    )
-                    if download_res["success"]:
-                        st.success("✅ GSTR-2B JSON successfully downloaded from GST Portal!")
-                        st.session_state["fetched_gstr2b_path"] = download_res["file_path"]
-                    else:
-                        st.error(f"Download Failed: {download_res.get('error')}")
+                    try:
+                        automation = GSTPortalAutomation()
+                        download_res = automation.login_and_download_gstr2b(
+                            session_data,
+                            gst_user,
+                            gst_pass,
+                            captcha_input,
+                            financial_year,
+                            return_period
+                        )
+                        if download_res.get("success"):
+                            st.success("✅ GSTR-2B JSON successfully downloaded from GST Portal!")
+                            st.session_state["fetched_gstr2b_path"] = download_res["file_path"]
+                        else:
+                            st.error(download_res.get("error", "Download failed."))
+                    except Exception as e:
+                        st.error("Auto-fetch failed. Please use Option A: Manual Upload.")
+                        with st.expander("Technical details"):
+                            st.code(str(e))
 
     if "fetched_gstr2b_path" in st.session_state:
         st.info(f"Using fetched file: `{st.session_state['fetched_gstr2b_path']}`")
