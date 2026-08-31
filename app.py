@@ -1,7 +1,9 @@
+# app.py
 import streamlit as st
 import pandas as pd
 import os
 import plotly.express as px
+import base64
 from core.gstr2b_parser import parse_gstr2b
 from core.tally_parser import parse_tally_excel
 from core.matching_engine import run_reconciliation
@@ -43,23 +45,73 @@ st.markdown(
 )
 
 
+def fy_options():
+    return ["2025-26", "2024-25", "2023-24", "2022-23", "2021-22"]
+
+
+def periods_for_fy(fy: str):
+    """
+    Indian FY: Apr (start year) → Mar (start year + 1)
+    Example: 2024-25 → April 2024 ... March 2025
+    """
+    try:
+        start_year = int(str(fy).split("-")[0])
+    except Exception:
+        start_year = 2024
+
+    month_order = [
+        (4, "April"),
+        (5, "May"),
+        (6, "June"),
+        (7, "July"),
+        (8, "August"),
+        (9, "September"),
+        (10, "October"),
+        (11, "November"),
+        (12, "December"),
+        (1, "January"),
+        (2, "February"),
+        (3, "March"),
+    ]
+    out = []
+    for month_num, month_name in month_order:
+        year = start_year if month_num >= 4 else start_year + 1
+        out.append(f"{month_name} {year}")
+    return out
+
+
 def show_gst_failure_debug(result: dict):
     st.error(result.get("error", "Failed to connect to GST Portal."))
 
+    page_url = result.get("page_url") or ""
+    page_title = result.get("page_title") or ""
     tech = result.get("technical_error") or ""
+    html_snippet = result.get("html_snippet") or ""
     shot_b64 = result.get("debug_screenshot_b64") or ""
 
-    if shot_b64 and not result.get("cloud_blocked"):
-        st.warning("Debug screenshot of server browser:")
-        st.image(
-            f"data:image/png;base64,{shot_b64}",
-            caption="GST portal page loaded by server",
-            use_container_width=True,
-        )
+    if page_url or page_title:
+        st.caption(f"**Page URL:** `{page_url}`")
+        st.caption(f"**Page title:** `{page_title}`")
 
-    with st.expander("Technical details", expanded=False):
+    if shot_b64:
+        st.warning("Debug screenshot of what the browser loaded:")
+        try:
+            # Decode base64 back to raw bytes for cross-platform image safety
+            shot_bytes = base64.b64decode(shot_b64)
+            st.image(
+                shot_bytes,
+                caption="GST portal page (automation browser)",
+                use_container_width=True,
+            )
+        except Exception as e:
+            st.error(f"Could not render page screenshot: {e}")
+
+    with st.expander("Technical details", expanded=True):
         if tech:
             st.code(tech)
+        if html_snippet:
+            st.markdown("**HTML snippet:**")
+            st.code(html_snippet[:4000])
 
 
 with st.sidebar:
@@ -69,7 +121,7 @@ with st.sidebar:
     st.markdown("### 📌 Navigation & Help")
     st.markdown(
         """
-    1. **Step 1:** Configure Client Details.  
+    1. **Step 1:** Configure Client Details (FY + matching month).  
     2. **Step 2:** Upload GSTR-2B (**Option A**) or Auto-Fetch (**Option B**).  
     3. **Step 3:** Upload Tally Purchase Register.  
     4. **Step 4:** Click **Run Reconciliation**.
@@ -77,9 +129,11 @@ with st.sidebar:
     )
     st.divider()
     st.info(
-        "💡 **Deployment Note:**\n"
-        "- **Option A (Manual Upload):** Works 100% on Cloud & Local.\n"
-        "- **Option B (Auto-Fetch):** Works best on Local Laptop (Indian Broadband IP)."
+        "💡 **Option A** works everywhere (Cloud + Local).\n\n"
+        "💡 **Option B** works on **local laptop** (Indian IP). "
+        "Cloud datacenter IPs are often blocked by GST portal.\n\n"
+        "📅 Return periods are linked to Financial Year "
+        "(Apr → Mar)."
     )
     st.caption("Built for CA Firms & Tax Professionals")
 
@@ -96,15 +150,25 @@ with st.expander("📋 Step 1: Client Details", expanded=True):
     with col1:
         client_name = st.text_input("Client Name", value="Sharma Enterprises")
         financial_year = st.selectbox(
-            "Financial Year", ["2024-25", "2023-24", "2025-26"]
+            "Financial Year",
+            fy_options(),
+            index=1,  # default 2024-25
+            help="Indian FY runs April to March. Period list updates automatically.",
         )
     with col2:
         client_gstin = st.text_input(
             "Client GSTIN", value="27AABCS1234F1Z5", max_chars=15
         )
+        period_list = periods_for_fy(financial_year)
         return_period = st.selectbox(
-            "Return Period",
-            ["June 2024", "May 2024", "April 2024", "March 2024"],
+            "Return Period (Month)",
+            period_list,
+            index=min(2, len(period_list) - 1),  # default around June if available
+            help="Only months belonging to the selected FY are shown.",
+        )
+        st.caption(
+            f"FY **{financial_year}** includes: "
+            f"{period_list[0]} → {period_list[-1]}"
         )
 
 
@@ -118,12 +182,12 @@ gstr2b_file_obj = None
 tally_file = None
 
 with tab_manual:
-    st.success("Recommended for Cloud Demos and Instant Reconciliation.")
+    st.success("Recommended for Cloud demos and production use.")
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("**📄 GSTR-2B JSON** *(from GST Portal)*")
         gstr2b_file = st.file_uploader(
-            "Upload GSTR-2B JSON", type=["json"], key="gstr2b_manual"
+            "Upload GSTR-2B JSON", type=["json", "zip"], key="gstr2b_manual"
         )
         if gstr2b_file:
             gstr2b_file_obj = gstr2b_file
@@ -137,8 +201,8 @@ with tab_manual:
 
 with tab_auto:
     st.info(
-        "Direct Auto-Fetch logs into `services.gst.gov.in` using Playwright. "
-        "For cloud security reasons, if government firewalls block cloud IPs, use Option A."
+        f"Auto-fetch will request **GSTR-2B for {return_period} (FY {financial_year})**. "
+        "Change Step 1 first if you need another month."
     )
     st.markdown("### 🔒 Fetch GSTR-2B Directly from GST Portal")
 
@@ -158,20 +222,34 @@ with tab_auto:
         else:
             st.session_state.pop("gst_session", None)
             st.session_state.pop("gst_last_failure", None)
+            st.session_state.pop("fetched_gstr2b_path", None)
 
-            with st.spinner("Connecting to GST Portal... Please wait..."):
+            with st.spinner(
+                "Connecting to GST Portal via background browser worker..."
+            ):
                 try:
                     automation = GSTPortalAutomation()
                     session_data = automation.fetch_login_captcha(username=gst_user)
                     if session_data.get("success"):
-                        st.session_state["gst_session"] = session_data
+                        st.session_state["gst_session"] = {
+                            "success": True,
+                            "session_id": session_data.get("session_id"),
+                            "captcha_b64": session_data.get("captcha_b64"),
+                            "captcha_strategy": session_data.get("captcha_strategy"),
+                        }
                         st.success("Connected to GST Portal! Solve CAPTCHA below:")
+                        if session_data.get("captcha_strategy"):
+                            st.caption(
+                                f"CAPTCHA strategy: `{session_data['captcha_strategy']}`"
+                            )
                     else:
                         st.session_state["gst_last_failure"] = session_data
                 except Exception as e:
+                    import traceback as tb
+
                     st.session_state["gst_last_failure"] = {
-                        "error": f"GST Auto-Fetch Error: {str(e)}",
-                        "technical_error": str(e),
+                        "error": f"GST Auto-Fetch Error: {e}",
+                        "technical_error": tb.format_exc(),
                     }
 
     if st.session_state.get("gst_last_failure") and not st.session_state.get(
@@ -182,10 +260,15 @@ with tab_auto:
     if st.session_state.get("gst_session", {}).get("success"):
         session_data = st.session_state["gst_session"]
         if session_data.get("captcha_b64"):
-            st.image(
-                f"data:image/png;base64,{session_data['captcha_b64']}",
-                caption="GST Portal CAPTCHA",
-            )
+            try:
+                # Decrypt CAPTCHA image into raw bytes for cross-platform visual rendering
+                captcha_bytes = base64.b64decode(session_data["captcha_b64"])
+                st.image(
+                    captcha_bytes,
+                    caption="GST Portal CAPTCHA",
+                )
+            except Exception as e:
+                st.error(f"Could not render dynamic CAPTCHA visual: {e}")
 
         captcha_input = st.text_input(
             "Enter CAPTCHA shown above:",
@@ -193,11 +276,17 @@ with tab_auto:
             key="gst_captcha_input",
         )
 
+        st.caption(
+            f"Will fetch: **{return_period}** | FY **{financial_year}**"
+        )
+
         if st.button("🚀 Step 2: Login & Fetch GSTR-2B Data"):
             if not captcha_input:
                 st.error("Please enter the CAPTCHA text.")
             else:
-                with st.spinner("Logging in and downloading GSTR-2B JSON..."):
+                with st.spinner(
+                    f"Logging in and downloading GSTR-2B JSON for {return_period}..."
+                ):
                     try:
                         automation = GSTPortalAutomation()
                         download_res = automation.login_and_download_gstr2b(
@@ -210,7 +299,8 @@ with tab_auto:
                         )
                         if download_res.get("success"):
                             st.success(
-                                "✅ GSTR-2B JSON successfully downloaded from GST Portal!"
+                                f"✅ GSTR-2B JSON downloaded for **{return_period}** "
+                                f"(FY {financial_year})!"
                             )
                             st.session_state["fetched_gstr2b_path"] = download_res[
                                 "file_path"
@@ -219,9 +309,16 @@ with tab_auto:
                             st.session_state.pop("gst_last_failure", None)
                         else:
                             st.error(download_res.get("error", "Download failed."))
+                            if download_res.get("technical_error"):
+                                with st.expander("Technical details"):
+                                    st.code(download_res["technical_error"])
                             st.session_state.pop("gst_session", None)
                     except Exception as e:
-                        st.error(f"Auto-fetch failed: {str(e)}")
+                        import traceback as tb
+
+                        st.error(f"Auto-fetch failed: {e}")
+                        with st.expander("Technical details"):
+                            st.code(tb.format_exc())
                         st.session_state.pop("gst_session", None)
 
     if "fetched_gstr2b_path" in st.session_state:
