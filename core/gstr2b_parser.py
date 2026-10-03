@@ -27,26 +27,23 @@ def load_gstr2b_json(file_input: Union[str, Any]) -> Dict[str, Any]:
     """
     raw_bytes = _extract_bytes(file_input)
 
-    # Detect PDF mismatch early and give a helpful message
     if raw_bytes.startswith(b"%PDF"):
         raise Exception(
             "The downloaded file is a PDF summary report, not a raw GSTR-2B JSON file. "
             "Please ensure you select 'DOWNLOAD JSON' on the GST Portal."
         )
 
-    # 1. Check if the file is a ZIP archive
     if zipfile.is_zipfile(io.BytesIO(raw_bytes)):
         with zipfile.ZipFile(io.BytesIO(raw_bytes)) as z:
             json_files = [f for f in z.namelist() if f.lower().endswith(".json")]
             if not json_files:
-                json_files = z.namelist()  # Fallback to first file inside ZIP
+                json_files = z.namelist()
             if not json_files:
                 raise Exception("The downloaded ZIP file from GST portal contains no valid files.")
 
             with z.open(json_files[0]) as jf:
                 raw_bytes = jf.read()
 
-    # 2. Try decoding with multiple standard encodings
     encodings = ["utf-8", "utf-8-sig", "utf-16", "utf-16-le", "utf-16-be", "latin-1"]
     for enc in encodings:
         try:
@@ -66,7 +63,6 @@ def parse_gstr2b(file_input: Union[str, Any]) -> pd.DataFrame:
     """
     data = load_gstr2b_json(file_input)
 
-    # Support nested 'docdata' structure if wrapped by GST portal
     if "docdata" in data and isinstance(data["docdata"], dict):
         data = data["docdata"]
 
@@ -76,18 +72,31 @@ def parse_gstr2b(file_input: Union[str, Any]) -> pd.DataFrame:
     b2b_sections = data.get("b2b", [])
     for supplier in b2b_sections:
         supplier_gstin = supplier.get("ctin", "")
-        supplier_name = supplier.get("cfs", "")
+        supplier_name = supplier.get("trdnm") or supplier.get("lgl_nm") or supplier.get("cfs") or supplier_gstin
         
         invoices = supplier.get("inv", [])
         for inv in invoices:
             inv_no = str(inv.get("inum", ""))
             inv_date = str(inv.get("idt", ""))
             val = normalize_amount(inv.get("val", 0))
+
+            # Extract tax components (check top-level first, then nested itms array)
             txval = normalize_amount(inv.get("txval", 0))
             igst = normalize_amount(inv.get("iamt", 0))
             cgst = normalize_amount(inv.get("camt", 0))
             sgst = normalize_amount(inv.get("samt", 0))
             cess = normalize_amount(inv.get("csamt", 0))
+
+            itms = inv.get("itms", [])
+            if txval == 0 and itms:
+                for itm in itms:
+                    det = itm.get("itm_det", {})
+                    txval += normalize_amount(det.get("txval", 0))
+                    igst += normalize_amount(det.get("iamt", 0))
+                    cgst += normalize_amount(det.get("camt", 0))
+                    sgst += normalize_amount(det.get("samt", 0))
+                    cess += normalize_amount(det.get("csamt", 0))
+
             itc_elg = inv.get("itc_elg", "Y")
 
             records.append({
@@ -112,7 +121,7 @@ def parse_gstr2b(file_input: Union[str, Any]) -> pd.DataFrame:
     cdnr_sections = data.get("cdnr", [])
     for supplier in cdnr_sections:
         supplier_gstin = supplier.get("ctin", "")
-        supplier_name = supplier.get("cfs", "")
+        supplier_name = supplier.get("trdnm") or supplier.get("lgl_nm") or supplier.get("cfs") or supplier_gstin
         
         notes = supplier.get("nt", [])
         for note in notes:
@@ -124,6 +133,17 @@ def parse_gstr2b(file_input: Union[str, Any]) -> pd.DataFrame:
             cgst = normalize_amount(note.get("camt", 0))
             sgst = normalize_amount(note.get("samt", 0))
             cess = normalize_amount(note.get("csamt", 0))
+
+            itms = note.get("itms", [])
+            if txval == 0 and itms:
+                for itm in itms:
+                    det = itm.get("itm_det", {})
+                    txval += normalize_amount(det.get("txval", 0))
+                    igst += normalize_amount(det.get("iamt", 0))
+                    cgst += normalize_amount(det.get("camt", 0))
+                    sgst += normalize_amount(det.get("samt", 0))
+                    cess += normalize_amount(det.get("csamt", 0))
+
             itc_elg = note.get("itc_elg", "Y")
 
             records.append({

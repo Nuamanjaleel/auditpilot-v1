@@ -1,0 +1,343 @@
+{
+  "gstin": "29AABCU9603R1ZM",
+  "fp": "082024",
+  "b2b": [
+    {
+      "ctin": "29AABCA1234A1Z5",
+      "trdnm": "ABC Traders Pvt Ltd",
+      "cfs": "Y",
+      "inv": [
+        {
+          "inum": "INV/24-25/001",
+          "idt": "05-08-2024",
+          "val": 118000.0,
+          "pos": "29",
+          "rchrg": "N",
+          "inv_typ": "R",
+          "itms": [
+            {
+              "num": 1,
+              "itm_det": {
+                "txval": 100000.0,
+                "iamt": 18000.0,
+                "camt": 0,
+                "samt": 0,
+                "csamt": 0,
+                "rt": 18
+              }
+            }
+          ]
+        },
+        {
+          "inum": "INV/24-25/002",
+          "idt": "12-08-2024",
+          "val": 59000.0,
+          "pos": "29",
+          "rchrg": "N",
+          "inv_typ": "R",
+          "itms": [
+            {
+              "num": 1,
+              "itm_det": {
+                "txval": 50000.0,
+                "iamt": 0,
+                "camt": 4500.0,
+                "samt": 4500.0,
+                "csamt": 0,
+                "rt": 9
+              }
+            }
+          ]
+        },
+        {
+          "inum": "INV/24-25/005",
+          "idt": "22-08-2024",
+          "val": 94400.0,
+          "pos": "29",
+          "rchrg": "N",
+          "inv_typ": "R",
+          "itms": [
+            {
+              "num": 1,
+              "itm_det": {
+                "txval": 80000.0,
+                "iamt": 14400.0,
+                "camt": 0,
+                "samt": 0,
+                "csamt": 0,
+                "rt": 18
+              }
+            }
+          ]
+        },
+        {
+          "inum": "INV/24-25/004",
+          "idt": "30-08-2024",
+          "val": 129800.0,
+          "pos": "29",
+          "rchrg": "N",
+          "inv_typ": "R",
+          "itms": [
+            {
+              "num": 1,
+              "itm_det": {
+                "txval": 110000.0,
+                "iamt": 19800.0,
+                "camt": 0,
+                "samt": 0,
+                "csamt": 0,
+                "rt": 18
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "ctin": "27AABCX5678B1Z3",
+      "trdnm": "XYZ Enterprises",
+      "cfs": "Y",
+      "inv": [
+        {
+          "inum": "XZ/2024/101",
+          "idt": "03-08-2024",
+          "val": 236000.0,
+          "pos": "27",
+          "rchrg": "N",
+          "inv_typ": "R",
+          "itms": [
+            {
+              "num": 1,
+              "itm_det": {
+                "txval": 200000.0,
+                "iamt": 36000.0,
+                "camt": 0,
+                "samt": 0,
+                "csamt": 0,
+                "rt": 18
+              }
+            }
+          ]
+        },
+        {
+          "inum": "XZ/2024/102",
+          "idt": "18-08-2024",
+          "val": 88500.0,
+          "pos": "27",
+          "rchrg": "N",
+          "inv_typ": "R",
+          "itms": [
+            {
+              "num": 1,
+              "itm_det": {
+                "txval": 75000.0,
+                "iamt": 13500.0,
+                "camt": 0,
+                "samt": 0,
+                "csamt": 0,
+                "rt": 18
+              }
+            }
+          ]
+        },
+        {
+          "inum": "XZ/2024/105",
+          "idt": "28-08-2024",
+          "val": 212400.0,
+          "pos": "27",
+          "rchrg": "N",
+          "inv_typ": "R",
+          "itms": [
+            {
+              "num": 1,
+              "itm_det": {
+                "txval": 180000.0,
+                "iamt": 32400.0,
+                "camt": 0,
+                "samt": 0,
+                "csamt": 0,
+                "rt": 18
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "ctin": "33AABCP9012C1Z7",
+      "trdnm": "PQR Industries Ltd",
+      "cfs": "Y",
+      "inv": [
+        {
+          "inum": "PQR/INV/201",
+          "idt": "07-08-2024",
+          "val": 177000.0,
+          "pos": "33",
+          "rchrg": "N",
+          "inv_typ": "R",
+          "itms": [
+            {
+              "num": 1,
+              "itm_det": {
+                "txval": 150000.0,
+                "iamt": 27000.0,
+                "camt": 0,
+                "samt": 0,
+                "csamt": 0,
+                "rt": 18
+              }
+            }
+          ]
+        },
+        {
+          "inum": "PQR/INV/203",
+          "idt": "14-08-2024",
+          "val": 112100.0,
+          "pos": "33",
+          "rchrg": "N",
+          "inv_typ": "R",
+          "itms": [
+            {
+              "num": 1,
+              "itm_det": {
+                "txval": 95000.0,
+                "iamt": 17100.0,
+                "camt": 0,
+                "samt": 0,
+                "csamt": 0,
+                "rt": 18
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "ctin": "07AABCL3456D1Z9",
+      "trdnm": "LMN Corporation",
+      "cfs": "Y",
+      "inv": [
+        {
+          "inum": "LMN-2024-301",
+          "idt": "10-08-2024",
+          "val": 354000.0,
+          "pos": "07",
+          "rchrg": "N",
+          "inv_typ": "R",
+          "itms": [
+            {
+              "num": 1,
+              "itm_det": {
+                "txval": 300000.0,
+                "iamt": 54000.0,
+                "camt": 0,
+                "samt": 0,
+                "csamt": 0,
+                "rt": 18
+              }
+            }
+          ]
+        },
+        {
+          "inum": "LMN-2024-302",
+          "idt": "15-08-2024",
+          "val": 141600.0,
+          "pos": "07",
+          "rchrg": "N",
+          "inv_typ": "R",
+          "itms": [
+            {
+              "num": 1,
+              "itm_det": {
+                "txval": 120000.0,
+                "iamt": 21600.0,
+                "camt": 0,
+                "samt": 0,
+                "csamt": 0,
+                "rt": 18
+              }
+            }
+          ]
+        },
+        {
+          "inum": "LMN-2024-303",
+          "idt": "19-08-2024",
+          "val": 295000.0,
+          "pos": "07",
+          "rchrg": "N",
+          "inv_typ": "R",
+          "itms": [
+            {
+              "num": 1,
+              "itm_det": {
+                "txval": 250000.0,
+                "iamt": 45000.0,
+                "camt": 0,
+                "samt": 0,
+                "csamt": 0,
+                "rt": 18
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "ctin": "29AABCD7890E1Z1",
+      "trdnm": "DEF Solutions",
+      "cfs": "Y",
+      "inv": [
+        {
+          "inum": "DEF/INV/401",
+          "idt": "01-08-2024",
+          "val": 70800.0,
+          "pos": "29",
+          "rchrg": "N",
+          "inv_typ": "R",
+          "itms": [
+            {
+              "num": 1,
+              "itm_det": {
+                "txval": 60000.0,
+                "iamt": 0,
+                "camt": 5400.0,
+                "samt": 5400.0,
+                "csamt": 0,
+                "rt": 9
+              }
+            }
+          ]
+        },
+        {
+          "inum": "DEF/INV/402",
+          "idt": "20-08-2024",
+          "val": 106200.0,
+          "pos": "29",
+          "rchrg": "N",
+          "inv_typ": "R",
+          "itms": [
+            {
+              "num": 1,
+              "itm_det": {
+                "txval": 90000.0,
+                "iamt": 0,
+                "camt": 8100.0,
+                "samt": 8100.0,
+                "csamt": 0,
+                "rt": 9
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "b2ba": [],
+  "cdnr": [],
+  "cdnra": [],
+  "isup_rev": [],
+  "isup_reva": [],
+  "impg": [],
+  "impgsez": [],
+  "doc_issue": []
+}

@@ -11,6 +11,7 @@ from core.itc_calculator import compute_itc_summary
 from core.ai_insights import generate_ca_insights
 from core.gst_portal import GSTPortalAutomation
 from reports.pdf_generator import generate_pdf_report
+from core.client_manager import load_all_clients, save_client, delete_client
 
 
 st.set_page_config(
@@ -96,7 +97,6 @@ def show_gst_failure_debug(result: dict):
     if shot_b64:
         st.warning("Debug screenshot of what the browser loaded:")
         try:
-            # Decode base64 back to raw bytes for cross-platform image safety
             shot_bytes = base64.b64decode(shot_b64)
             st.image(
                 shot_bytes,
@@ -115,13 +115,13 @@ def show_gst_failure_debug(result: dict):
 
 
 with st.sidebar:
-    st.title("🏛️ AuditPilot V1.5")
+    st.title("🏛️ AuditPilot V1.6")
     st.caption("AI-Powered GST Reconciliation Engine")
     st.divider()
     st.markdown("### 📌 Navigation & Help")
     st.markdown(
         """
-    1. **Step 1:** Configure Client Details (FY + matching month).  
+    1. **Step 1:** Select Client Profile or Configure New Client.  
     2. **Step 2:** Upload GSTR-2B (**Option A**) or Auto-Fetch (**Option B**).  
     3. **Step 3:** Upload Tally Purchase Register.  
     4. **Step 4:** Click **Run Reconciliation**.
@@ -145,10 +145,31 @@ st.markdown(
 st.divider()
 
 
-with st.expander("📋 Step 1: Client Details", expanded=True):
+# Load client profiles
+all_clients = load_all_clients()
+client_options = ["➕ Create New Client Profile"] + list(all_clients.keys())
+
+with st.expander("📋 Step 1: Client Profile & Period Config", expanded=True):
+    selected_profile = st.selectbox(
+        "📂 Select Saved Client Profile:",
+        client_options,
+        index=0,
+        help="Quickly load client GSTIN and portal username from your client vault.",
+    )
+
+    default_name = "Sharma Enterprises"
+    default_gstin = "27AABCS1234F1Z5"
+    default_user = ""
+
+    if selected_profile != "➕ Create New Client Profile" and selected_profile in all_clients:
+        prof = all_clients[selected_profile]
+        default_name = prof.get("client_name", default_name)
+        default_gstin = prof.get("client_gstin", default_gstin)
+        default_user = prof.get("gst_username", default_user)
+
     col1, col2 = st.columns(2)
     with col1:
-        client_name = st.text_input("Client Name", value="Sharma Enterprises")
+        client_name = st.text_input("Client Name", value=default_name)
         financial_year = st.selectbox(
             "Financial Year",
             fy_options(),
@@ -157,19 +178,30 @@ with st.expander("📋 Step 1: Client Details", expanded=True):
         )
     with col2:
         client_gstin = st.text_input(
-            "Client GSTIN", value="27AABCS1234F1Z5", max_chars=15
+            "Client GSTIN", value=default_gstin, max_chars=15
         )
         period_list = periods_for_fy(financial_year)
         return_period = st.selectbox(
             "Return Period (Month)",
             period_list,
-            index=min(2, len(period_list) - 1),  # default around June if available
+            index=min(2, len(period_list) - 1),
             help="Only months belonging to the selected FY are shown.",
         )
-        st.caption(
-            f"FY **{financial_year}** includes: "
-            f"{period_list[0]} → {period_list[-1]}"
-        )
+
+    col_btn1, col_btn2 = st.columns([1, 4])
+    with col_btn1:
+        if st.button("💾 Save Profile", help="Save client details for future 1-click selection"):
+            if save_client(client_name, client_gstin, default_user):
+                st.success(f"Saved '{client_name}' to Client Vault!")
+                st.rerun()
+            else:
+                st.error("Please enter a valid Client Name.")
+    with col_btn2:
+        if selected_profile != "➕ Create New Client Profile":
+            if st.button("🗑️ Delete Profile"):
+                delete_client(selected_profile)
+                st.success(f"Deleted profile '{selected_profile}'.")
+                st.rerun()
 
 
 st.header("📁 Step 2: Source Data Selection")
@@ -209,8 +241,11 @@ with tab_auto:
     col_cred1, col_cred2 = st.columns(2)
     with col_cred1:
         gst_user = st.text_input(
-            "GST Portal Username", placeholder="e.g. sharma_tax"
+            "GST Portal Username", value=default_user, placeholder="e.g. sharma_tax"
         )
+        # Update saved username if user edits field
+        if gst_user != default_user and client_name:
+            save_client(client_name, client_gstin, gst_user)
     with col_cred2:
         gst_pass = st.text_input("GST Portal Password", type="password")
 
@@ -261,7 +296,6 @@ with tab_auto:
         session_data = st.session_state["gst_session"]
         if session_data.get("captcha_b64"):
             try:
-                # Decrypt CAPTCHA image into raw bytes for cross-platform visual rendering
                 captcha_bytes = base64.b64decode(session_data["captcha_b64"])
                 st.image(
                     captcha_bytes,

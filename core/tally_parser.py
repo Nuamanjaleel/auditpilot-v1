@@ -1,5 +1,6 @@
 from typing import Union, BinaryIO
 import pandas as pd
+import re
 from core.normalizer import (
     normalize_gstin,
     normalize_invoice_number,
@@ -22,7 +23,7 @@ COLUMN_ALIASES = {
     ],
     "invoice_number": [
         "voucher no", "vch no", "voucher no.", "vch no.", "invoice no",
-        "invoice no.", "supplier inv no", "supplier invoice no", "bill no", "doc no"
+        "invoice no.", "supplier inv no", "supplier invoice no", "supplier invoice no.", "bill no", "doc no"
     ],
     "supplier_gstin": [
         "gstin", "gstin/uin", "party gstin", "supplier gstin", "uin", "gst in"
@@ -53,11 +54,10 @@ def _find_header_row(df_raw: pd.DataFrame) -> int:
     Scans the first 15 rows of an Excel file to find where the actual table headers start.
     """
     for idx, row in df_raw.head(15).iterrows():
-        row_values = [str(val).lower().strip() for val in row.values if pd.notna(val)]
-        # Check if at least 2 key accounting column terms exist in this row
+        row_values = [str(val).lower().replace(".", "").strip() for val in row.values if pd.notna(val)]
         match_count = sum(
             1 for val in row_values
-            if any(alias in val for aliases in COLUMN_ALIASES.values() for alias in aliases)
+            if any(alias.replace(".", "").strip() in val for aliases in COLUMN_ALIASES.values() for alias in aliases)
         )
         if match_count >= 2:
             return idx
@@ -67,15 +67,21 @@ def _find_header_row(df_raw: pd.DataFrame) -> int:
 def _map_columns(df: pd.DataFrame) -> dict:
     """
     Maps detected Excel column names to standard internal field names.
+    Ignores punctuation/special characters for 100% reliable matching.
     """
     column_mapping = {}
     cleaned_df_cols = {col: str(col).lower().strip() for col in df.columns}
 
     for standard_col, aliases in COLUMN_ALIASES.items():
         for original_col, clean_name in cleaned_df_cols.items():
-            if clean_name in aliases or any(alias == clean_name for alias in aliases):
-                column_mapping[original_col] = standard_col
-                break
+            if original_col in column_mapping:
+                continue
+            clean_normalized = re.sub(r'[^a-z0-9]', '', clean_name)
+            for alias in aliases:
+                alias_normalized = re.sub(r'[^a-z0-9]', '', alias)
+                if alias_normalized == clean_normalized or alias_normalized in clean_normalized or clean_normalized in alias_normalized:
+                    column_mapping[original_col] = standard_col
+                    break
 
     return column_mapping
 
@@ -92,7 +98,7 @@ def parse_tally_excel(file_or_path: Union[str, BinaryIO]) -> pd.DataFrame:
     # 2. Re-read the full Excel sheet with the correct header row
     if hasattr(file_or_path, 'seek'):
         file_or_path.seek(0)
-    df = pd.read_excel(file_or_path, skiprows=header_row_idx)
+    df = pd.read_excel(file_or_path, header=header_row_idx)
 
     # 3. Map columns to our standard names
     col_map = _map_columns(df)
